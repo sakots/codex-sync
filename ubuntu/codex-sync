@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$HOME/dev/codex-history"
+LOCAL="$HOME/.codex/sessions"
+REPO_SESSIONS="$REPO/sessions"
+
+echo "== Codex session sync =="
+
+if [ ! -d "$REPO/.git" ]; then
+  echo "ERROR: Git repository not found:"
+  echo "  $REPO"
+  exit 1
+fi
+
+mkdir -p "$LOCAL"
+mkdir -p "$REPO_SESSIONS"
+
+cd "$REPO"
+
+echo
+echo "[1/5] Pulling remote changes..."
+git pull --rebase
+
+echo
+echo "[2/5] Importing remote sessions into ~/.codex..."
+rsync -a \
+  "$REPO_SESSIONS/" \
+  "$LOCAL/"
+
+echo
+echo "[3/5] Exporting local sessions into repository..."
+rsync -a \
+  "$LOCAL/" \
+  "$REPO_SESSIONS/"
+
+echo
+echo "[4/5] Checking Git changes..."
+
+git add sessions
+
+if git diff --cached --quiet; then
+  echo "No new Codex sessions."
+else
+  HOST="$(hostname)"
+  DATE="$(date '+%Y-%m-%d %H:%M:%S')"
+
+  git commit -m "Sync Codex sessions from $HOST at $DATE"
+
+  echo
+  echo "[5/5] Pushing..."
+  git push
+fi
+
+echo
+echo "Codex sessions synced."
