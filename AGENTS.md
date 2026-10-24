@@ -19,6 +19,15 @@ codex-syncは、複数の環境でcodexの同期を行うためのスクリプ�
 - 不要になったコードやドキュメントは消すこと
 - 不必要にテストやコードを書き込まないようにすること
 
+## OpenSpec
+
+- 現在の仕様は`openspec/specs/`を参照する。
+- 変更時は`openspec new change <変更名>`で提案を作り、proposal、specs、design、tasksの順に資料を整える。
+- 仕様変更のない作業は`.openspec.yaml`で`skip_specs: true`を指定し、仕様差分を捏造しない。
+- 実装前に`openspec validate <変更名> --strict`を実行する。
+- テストは`node --test tests/session-sync.test.mjs`で実行する。実データではなく一時ディレクトリとローカルのbareリポジトリを使用する。
+- 検証後はtasksを更新し、`openspec archive <変更名> --yes`で仕様を反映する。続けて`openspec validate --all --strict`を実行する。
+
 ## コミット
 
 - 変更や修正1つにつき1回コミットを行う。mainブランチで作業しないこと。
