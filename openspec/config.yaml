@@ -1,0 +1,10 @@
+schema: spec-driven
+
+context: |
+  Language: Japanese
+  All artifacts must be written in Japanese.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+  This repository contains Bash (Ubuntu) and PowerShell (Windows) scripts.
+  Follow AGENTS.md: documentation first, tests second, minimal implementation last.
+  Preserve existing sync behavior unless a change explicitly requests otherwise.
+  Never use real Codex sessions or an external Git remote for tests.
