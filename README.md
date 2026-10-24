@@ -13,9 +13,41 @@ omp（oh-my-pi）の標準状態ディレクトリがある場合、そのセッ
 
 1. セッション保存用のリモートリポジトリに、少なくとも1つのコミットと既定ブランチを作成します。
 2. `git clone <同期用リポジトリのURL> ~/dev/codex-history`でクローンします。このcodex-syncリポジトリとは別のリポジトリです。Windowsでは`$HOME\dev\codex-history`に配置してください。
-3. Ubuntuでは`ubuntu/codex-sync`をPATHの通った場所にコピーし、`chmod +x`を実行します。
-4. Windowsでは`windows/codex-sync.ps1`と`windows/codex-sync.cmd`を`%USERPROFILE%\bin`にコピーし、このディレクトリをPATHに追加します。cmdはこの場所のps1を呼び出します。
+3. このcodex-syncリポジトリを、今後も移動・削除しない場所にクローンします。
+4. 下記のOS別インストーラーを実行します。リンクの作成とユーザーPATH設定を行い、依存ツールの導入や同期用リポジトリの作成・同期の実行は行いません。
 5. `codex-sync`を実行します。Windowsの実行ポリシーでps1が拒否される場合は、組織のポリシーに従って許可してください。
+
+### Ubuntu
+
+チェックアウトのルートで実行します。BashスクリプトはLFで保存してください。
+
+```sh
+bash ubuntu/install.sh
+source ~/.bashrc
+codex-sync
+```
+
+`~/.local/bin/codex-sync`からチェックアウト内のスクリプトへのシンボリックリンクを作り、実行権限を設定します。`~/.profile`と`~/.bashrc`にPATH設定を追記します。実行元シェルへは遡及しないため、上記の再読込、または新しいBashを使用してください。
+
+### Windows
+
+チェックアウトのルートでPowerShell 7から実行します。
+
+```powershell
+pwsh -NoProfile -File .\windows\install.ps1
+$env:Path = "$HOME\bin\codex-sync;$env:Path"
+codex-sync
+```
+
+`~\bin\codex-sync`からチェックアウトの`windows\`へのディレクトリジャンクションを作り、そのディレクトリをユーザーPATHへ登録します。管理者権限や開発者モードは不要です。cmdは同じディレクトリのps1を呼びます。`& .\windows\install.ps1`のように現在のPowerShellで実行した場合、そのプロセスのPATHにも反映されます。別プロセスの`pwsh -File`で実行した場合は、上記のPATH設定を現在のシェルで実行してください。他のアプリケーションでも永続PATHを使う場合は、サインアウト・サインインで環境を読み直してください。
+
+### 導入後の更新と競合
+
+- 同じチェックアウトで`git pull`すれば、次回の`codex-sync`から更新が反映されます。インストーラーの再実行は不要です。同期そのものは引き続き手動実行です。
+- インストーラーは任意の作業ディレクトリから絶対パスで呼び出せます。空白を含むパスにも対応します。
+- 同じチェックアウトから再実行してもPATH設定は重複しません。
+- 配置先に通常ファイル・ディレクトリ・別のリンクがある場合は、上書きせず停止します。内容を確認して手動で退避してから再実行してください。以前のコピー導入が残っている場合は`type -a codex-sync`（Ubuntu）、`where.exe codex-sync`（Windows）で優先されるコマンドを確認してください。
+- チェックアウトを移動する場合は、古いリンクだけを手動で削除してから移動先のインストーラーを実行してください。Windowsでは`cmd /c rmdir "%USERPROFILE%\bin\codex-sync"`でジャンクションだけを削除できます。リンク先のリポジトリ本体を削除しないでください。
 
 ## 同期するもの
 
@@ -47,7 +79,7 @@ ompは初回起動後に同期してください。まだ起動していなく�
 
 ## 開発・検証
 
-開発規約は[AGENTS.md](AGENTS.md)、現状仕様は[session-sync](openspec/specs/session-sync/spec.md)を参照してください。OpenSpec CLIを利用し、資料→テスト→最小実装の順で進めます。AIツール固有の生成物は導入していません。
+開発規約は[AGENTS.md](AGENTS.md)、現状仕様は[session-sync](openspec/specs/session-sync/spec.md)と[command-installation](openspec/specs/command-installation/spec.md)を参照してください。OpenSpec CLIを利用し、資料→テスト→最小実装の順で進めます。AIツール固有の生成物は導入していません。
 
 ```sh
 openspec new change <変更名>
@@ -64,19 +96,27 @@ openspec validate --all --strict
 
 ```sh
 node --test tests/session-sync.test.mjs
+node --test tests/install.test.mjs
 ```
 
-WindowsからWSL内のUbuntuも検証する場合は、対象ディストリビューションにGit・Bash・rsyncを用意して実行します。WSL側のNode.jsは不要です。WindowsのチェックアウトがCRLFの場合に備え、WSL検証では一時コピーの改行のみLFに変換します。Ubuntuへの手動配置時もBashスクリプトはLFで保存してください。
+WindowsからWSL内のUbuntuも検証する場合は、対象ディストリビューションにGit・Bash・rsyncを用意して実行します。WSL側のNode.jsは不要です。`ubuntu/`のスクリプトは`.gitattributes`でLFを指定し、WSL検証でも一時コピーの改行をLFに統一します。
 
 ```powershell
 $env:CODEX_SYNC_TEST_WSL_DISTRO = "Ubuntu-24.04"
 node --test tests/session-sync.test.mjs
+node --test tests/install.test.mjs
 Remove-Item Env:CODEX_SYNC_TEST_WSL_DISTRO
 ```
 
-テストは一時HOMEとローカルbareリモートを使用し、実際のCodex・ompデータや外部リモートには触れません。既存の同期動作に加え、ompの往復、初回取り込み、未利用時の履歴保護、ompのみの変更、設定・認証の除外、pull失敗時の停止を検証します。Windowsのcmdランチャーのインストール状態は検証対象外です。
+テストは一時HOMEとローカルbareリモートを使用し、実際のCodex・ompデータや外部リモートには触れません。同期テストはompの往復、初回取り込み、未利用時の履歴保護、ompのみの変更、設定・認証の除外、pull失敗時の停止を検証します。導入テストはリンク経由の実行・更新反映、PATH設定、再実行、既存配置の保護を検証します。Windows導入テストはユーザーPATHを一時変更し、子プロセスの`finally`で復元します。他のインストーラーを同時実行しないでください。
 
 ## 更新履歴
+
+### [2026/10/24] v0.3.0
+
+- Ubuntu・Windowsに、リンクとPATHを自動設定するインストーラーを追加。
+- リポジトリの更新を再インストールなしで利用できるようにし、Windowsのcmdを同じディレクトリのps1参照に修正。
+- 導入・更新反映・再実行・既存配置の保護を検証する回帰テストを追加。
 
 ### [2026/10/24] v0.2.0
 
