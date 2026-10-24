@@ -1,18 +1,31 @@
 $ErrorActionPreference = "Stop"
 
 $Repo = Join-Path $HOME "dev\codex-history"
-$Local = Join-Path $HOME ".codex\sessions"
-$RepoSessions = Join-Path $Repo "sessions"
+$Targets = @(
+    @{
+        Local = Join-Path $HOME ".codex\sessions"
+        Repo = Join-Path $Repo "sessions"
+        Path = "sessions"
+    }
+)
+if (Test-Path (Join-Path $HOME ".omp\agent") -PathType Container) {
+    $Targets += @{
+        Local = Join-Path $HOME ".omp\agent\sessions"
+        Repo = Join-Path $Repo "omp\sessions"
+        Path = "omp/sessions"
+    }
+}
 
-Write-Host "== Codex session sync =="
+Write-Host "== Session sync =="
 
 if (-not (Test-Path (Join-Path $Repo ".git"))) {
     Write-Host "ERROR: repo not found: $Repo" -ForegroundColor Red
     exit 1
 }
 
-New-Item -ItemType Directory -Force $Local | Out-Null
-New-Item -ItemType Directory -Force $RepoSessions | Out-Null
+foreach ($Target in $Targets) {
+    New-Item -ItemType Directory -Force -Path $Target.Local, $Target.Repo | Out-Null
+}
 
 Push-Location $Repo
 
@@ -26,49 +39,29 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
-Write-Host "[2/5] Import repo sessions -> .codex"
+Write-Host "[2/5] Import repository sessions"
 
-robocopy `
-    $RepoSessions `
-    $Local `
-    /E `
-    /XO `
-    /R:2 `
-    /W:1 `
-    /NFL `
-    /NDL `
-    /NJH `
-    /NJS `
-    /NP | Out-Null
-
-if ($LASTEXITCODE -ge 8) {
-    throw "robocopy import failed: $LASTEXITCODE"
+foreach ($Target in $Targets) {
+    robocopy $Target.Repo $Target.Local /E /XO /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) {
+        throw "robocopy import failed for $($Target.Path): $LASTEXITCODE"
+    }
 }
 
 Write-Host ""
-Write-Host "[3/5] Export .codex sessions -> repo"
+Write-Host "[3/5] Export local sessions"
 
-robocopy `
-    $Local `
-    $RepoSessions `
-    /E `
-    /XO `
-    /R:2 `
-    /W:1 `
-    /NFL `
-    /NDL `
-    /NJH `
-    /NJS `
-    /NP | Out-Null
-
-if ($LASTEXITCODE -ge 8) {
-    throw "robocopy export failed: $LASTEXITCODE"
+foreach ($Target in $Targets) {
+    robocopy $Target.Local $Target.Repo /E /XO /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) {
+        throw "robocopy export failed for $($Target.Path): $LASTEXITCODE"
+    }
 }
 
 Write-Host ""
 Write-Host "[4/5] Commit changes"
 
-git add sessions
+git add -- ($Targets | ForEach-Object { $_.Path })
 
 git diff --cached --quiet
 
@@ -79,7 +72,7 @@ else {
     $HostName = $env:COMPUTERNAME
     $Now = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-    git commit -m "Sync Codex sessions from $HostName at $Now"
+    git commit -m "Sync sessions from $HostName at $Now"
     if ($LASTEXITCODE -ne 0) {
         throw "git commit failed"
     }

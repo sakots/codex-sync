@@ -2,10 +2,14 @@
 set -euo pipefail
 
 REPO="$HOME/dev/codex-history"
-LOCAL="$HOME/.codex/sessions"
-REPO_SESSIONS="$REPO/sessions"
+LOCAL_DIRS=("$HOME/.codex/sessions")
+REPO_DIRS=("sessions")
+if [ -d "$HOME/.omp/agent" ]; then
+  LOCAL_DIRS+=("$HOME/.omp/agent/sessions")
+  REPO_DIRS+=("omp/sessions")
+fi
 
-echo "== Codex session sync =="
+echo "== Session sync =="
 
 if [ ! -d "$REPO/.git" ]; then
   echo "ERROR: Git repository not found:"
@@ -13,8 +17,9 @@ if [ ! -d "$REPO/.git" ]; then
   exit 1
 fi
 
-mkdir -p "$LOCAL"
-mkdir -p "$REPO_SESSIONS"
+for i in "${!LOCAL_DIRS[@]}"; do
+  mkdir -p "${LOCAL_DIRS[$i]}" "$REPO/${REPO_DIRS[$i]}"
+done
 
 cd "$REPO"
 
@@ -23,29 +28,29 @@ echo "[1/5] Pulling remote changes..."
 git pull --rebase
 
 echo
-echo "[2/5] Importing remote sessions into ~/.codex..."
-rsync -a \
-  "$REPO_SESSIONS/" \
-  "$LOCAL/"
+echo "[2/5] Importing remote sessions..."
+for i in "${!LOCAL_DIRS[@]}"; do
+  rsync -a "$REPO/${REPO_DIRS[$i]}/" "${LOCAL_DIRS[$i]}/"
+done
 
 echo
 echo "[3/5] Exporting local sessions into repository..."
-rsync -a \
-  "$LOCAL/" \
-  "$REPO_SESSIONS/"
+for i in "${!LOCAL_DIRS[@]}"; do
+  rsync -a "${LOCAL_DIRS[$i]}/" "$REPO/${REPO_DIRS[$i]}/"
+done
 
 echo
 echo "[4/5] Checking Git changes..."
 
-git add sessions
+git add -- "${REPO_DIRS[@]}"
 
 if git diff --cached --quiet; then
-  echo "No new Codex sessions."
+  echo "No new sessions."
 else
   HOST="$(hostname)"
   DATE="$(date '+%Y-%m-%d %H:%M:%S')"
 
-  git commit -m "Sync Codex sessions from $HOST at $DATE"
+  git commit -m "Sync sessions from $HOST at $DATE"
 
   echo
   echo "[5/5] Pushing..."
@@ -53,4 +58,4 @@ else
 fi
 
 echo
-echo "Codex sessions synced."
+echo "Sessions synced."

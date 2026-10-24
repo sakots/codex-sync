@@ -22,7 +22,7 @@ function output(result) {
   return `${result.error ?? ''}\n${result.stdout ?? ''}\n${result.stderr ?? ''}`;
 }
 
-function fixture(t, runtime) {
+function fixture(t, runtime, { omp = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'codex-sync test-'));
   t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
@@ -94,7 +94,8 @@ function fixture(t, runtime) {
   }
   identity(seed);
   write(seed, `sessions/${remoteFile}`, remoteContent);
-  git(seed, 'add', 'sessions');
+  if (omp) write(seed, `omp/sessions/${remoteFile}`, remoteContent);
+  git(seed, 'add', '--all');
   git(seed, 'commit', '-m', 'Seed session');
   git(seed, 'remote', 'add', 'origin', bare);
   git(seed, 'push', '-u', 'origin', 'main');
@@ -109,7 +110,9 @@ function fixture(t, runtime) {
       // WSL Git needs a Linux remote path; the fixture itself remains on the host.
       if (runtime.wsl) git(repo, 'remote', 'set-url', 'origin', linuxPath(bare));
     }
-    return { home, repo, sessions: path.join(home, '.codex/sessions') };
+    const ompAgent = path.join(home, '.omp/agent');
+    return { home, repo, sessions: path.join(home, '.codex/sessions'),
+      ompAgent, ompSessions: path.join(ompAgent, 'sessions') };
   }
   return { root, bare, git, write, machine, sync };
 }
@@ -188,16 +191,99 @@ for (const runtime of runtimes) {
       assert.equal(f.git(f.bare, 'show', `main:sessions/${remoteFile}`), expected.trim());
     });
 
-    test('pull failure prevents both copy directions and any new commit', (t) => {
+    test('omp sessions and sidecars round-trip without mixing Codex or leaking settings', (t) => {
       const f = fixture(t, runtime);
+      const a = f.machine('omp a');
+      const b = f.machine('omp b');
+      const ompContent = '{"message":"omp session"}\n';
+      const replyFile = '--other-project--/reply.jsonl';
+      const reply = '{"message":"omp reply"}\n';
+      const sidecar = '--project--/session/files/result.txt';
+      f.write(a.sessions, localFile, localContent);
+      f.write(a.ompSessions, localFile, ompContent);
+      f.write(a.ompSessions, sidecar, 'saved result\n');
+      f.write(a.ompAgent, 'auth.json', '{"token":"do-not-sync"}\n');
+      f.write(a.ompAgent, 'config.yml', 'model: private\n');
+      f.write(a.ompAgent, 'agent.db', 'private database');
+      f.write(b.ompSessions, replyFile, reply);
+      for (const machine of [a, b, a]) {
+        const result = f.sync(machine.home);
+        assert.equal(result.status, 0, output(result));
+      }
+      for (const machine of [a, b]) {
+        assert.equal(readFileSync(path.join(machine.sessions, localFile), 'utf8'), localContent);
+        assert.equal(readFileSync(path.join(machine.ompSessions, localFile), 'utf8'), ompContent);
+        assert.equal(readFileSync(path.join(machine.ompSessions, replyFile), 'utf8'), reply);
+        assert.equal(readFileSync(path.join(machine.ompSessions, sidecar), 'utf8'), 'saved result\n');
+      }
+      assert.equal(f.git(f.bare, 'show', `main:sessions/${localFile}`), localContent.trim());
+      assert.equal(f.git(f.bare, 'show', `main:omp/sessions/${localFile}`), ompContent.trim());
+      assert.equal(f.git(f.bare, 'show', `main:omp/sessions/${replyFile}`), reply.trim());
+      assert.deepEqual(f.git(f.bare, 'ls-tree', '--name-only', 'main:omp').split('\n'), ['sessions']);
+      assert.equal(existsSync(path.join(b.ompAgent, 'auth.json')), false);
+      assert.equal(existsSync(path.join(b.ompAgent, 'config.yml')), false);
+      assert.equal(existsSync(path.join(b.ompAgent, 'agent.db')), false);
+    });
+
+    test('existing omp agent imports first sessions and publishes omp-only changes once', (t) => {
+      const f = fixture(t, runtime, { omp: true });
+      const machine = f.machine('omp first import');
+      mkdirSync(machine.ompAgent, { recursive: true });
+      assert.equal(existsSync(machine.ompSessions), false);
+      const first = f.sync(machine.home);
+      assert.equal(first.status, 0, output(first));
+      assert.equal(readFileSync(path.join(machine.ompSessions, remoteFile), 'utf8'), remoteContent);
+      const before = f.git(f.bare, 'rev-parse', 'main');
+      f.write(machine.ompSessions, localFile, localContent);
+      const publish = f.sync(machine.home);
+      assert.equal(publish.status, 0, output(publish));
+      assert.equal(f.git(f.bare, 'show', `main:omp/sessions/${localFile}`), localContent.trim());
+      assert.equal(f.git(f.bare, 'rev-parse', 'main^'), before);
+      assert.deepEqual(f.git(f.bare, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'main').split('\n'),
+        [`omp/sessions/${localFile}`]);
+      const after = f.git(f.bare, 'rev-parse', 'main');
+      f.git(machine.repo, 'remote', 'set-url', '--push', 'origin', path.join(f.root, 'absent.git'));
+      const unchanged = f.sync(machine.home);
+      assert.equal(unchanged.status, 0, output(unchanged));
+      assert.equal(f.git(f.bare, 'rev-parse', 'main'), after);
+    });
+
+    test('unused omp stays absent while Codex changes preserve remote omp history', (t) => {
+      const f = fixture(t, runtime, { omp: true });
+      const machine = f.machine('no omp');
+      f.write(machine.sessions, localFile, localContent);
+      const result = f.sync(machine.home);
+      assert.equal(result.status, 0, output(result));
+      assert.equal(existsSync(path.join(machine.home, '.omp')), false);
+      assert.equal(f.git(f.bare, 'show', `main:omp/sessions/${remoteFile}`), remoteContent.trim());
+      assert.equal(f.git(f.bare, 'show', `main:sessions/${localFile}`), localContent.trim());
+    });
+
+    test('empty initialized omp does not prevent Codex synchronization', (t) => {
+      const f = fixture(t, runtime);
+      const machine = f.machine('empty omp');
+      mkdirSync(machine.ompAgent, { recursive: true });
+      f.write(machine.sessions, localFile, localContent);
+      const result = f.sync(machine.home);
+      assert.equal(result.status, 0, output(result));
+      assert.equal(f.git(f.bare, 'show', `main:sessions/${localFile}`), localContent.trim());
+      assert.equal(existsSync(machine.ompSessions), true);
+    });
+
+    test('pull failure prevents both copy directions and any new commit', (t) => {
+      const f = fixture(t, runtime, { omp: true });
       const machine = f.machine('pull failure');
       const before = f.git(machine.repo, 'rev-parse', 'HEAD');
       f.write(machine.sessions, localFile, localContent);
+      f.write(machine.ompSessions, localFile, localContent);
       f.git(machine.repo, 'remote', 'set-url', 'origin', path.join(f.root, 'absent.git'));
       const result = f.sync(machine.home);
       assert.notEqual(result.status, 0, output(result));
       assert.equal(existsSync(path.join(machine.sessions, remoteFile)), false);
       assert.equal(existsSync(path.join(machine.repo, 'sessions', localFile)), false);
+      assert.equal(existsSync(path.join(machine.ompSessions, remoteFile)), false);
+      assert.equal(existsSync(path.join(machine.repo, 'omp/sessions', localFile)), false);
+      assert.equal(readFileSync(path.join(machine.ompSessions, localFile), 'utf8'), localContent);
       assert.equal(readFileSync(path.join(machine.sessions, localFile), 'utf8'), localContent);
       assert.equal(f.git(machine.repo, 'rev-parse', 'HEAD'), before);
       assert.equal(f.git(f.bare, 'rev-parse', 'main'), before);
